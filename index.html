@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Optimal Path Finder</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Mapbox GL -->
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { color: #0077cc; }
+        label { font-weight: bold; }
+        input[type="text"] { width: 340px; padding: 8px; margin: 6px 0 10px 0; font-size: 1.1em; }
+        #map { margin-top: 35px; height: 400px; width: 100%; border-radius: 12px; }
+        button { margin-top: 10px; padding: 10px 30px; font-size: 16px; background-color: green; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        .autocomplete-suggestions { border: 1px solid #eee; max-height: 170px; overflow-y: auto; position: absolute; background: #fff; z-index: 10; width: 340px; }
+        .autocomplete-suggestion { padding: 8px; cursor: pointer; }
+        .autocomplete-suggestion:hover { background: #e2eaff; }
+        .autocomplete-container { position: relative; margin-bottom: 18px; }
+        .hidden { display: none; }
+        #new-area-btn { 
+            position: absolute; top: 25px; right: 35px; 
+            background: #0077cc; color: #fff; border-radius: 8px;
+            border: none; font-size: 15px; padding: 8px 18px; z-index: 20; cursor: pointer; 
+        }
+        .marker-label {
+            font-weight: bold;
+            color: white;
+            font-size: 14px;
+            background: #222;
+            border-radius: 4px;
+            padding: 1px 6px;
+        }
+    </style>
+</head>
+<body>
+<h1>Optimal Path Finder</h1>
+<button id="new-area-btn" class="hidden" onclick="resetArea()">New Area</button>
+<!-- AREA INPUT (STEP 1) -->
+<div id="area-section">
+    <label for="area">Area (city/state/district):</label>
+    <div class="autocomplete-container">
+        <input type="text" id="area" autocomplete="off" placeholder="Ex: Mumbai, Maharashtra">
+        <div class="autocomplete-suggestions" id="area-suggestions"></div>
+    </div>
+    <button id="area-go-btn" type="button">Go</button>
+</div>
+
+<!-- MAIN ROUTE INPUTS (STEP 2) -->
+<div id="route-section" class="hidden">
+    <label for="start">Start Location:</label>
+    <div class="autocomplete-container">
+        <input type="text" id="start" autocomplete="off" placeholder="Start location">
+        <div class="autocomplete-suggestions" id="start-suggestions"></div>
+    </div>
+
+
+    <div id="waypoints-list"></div>
+    <button id="add-waypoint-btn" type="button" style="background:#0077cc;margin-bottom:15px;">+ Add Waypoint</button>
+    <br>
+    <label for="end">End Location:</label>
+    <div class="autocomplete-container">
+        <input type="text" id="end" autocomplete="off" placeholder="End location">
+        <div class="autocomplete-suggestions" id="end-suggestions"></div>
+    </div>
+    <button onclick="findRoute()">Find Route</button>
+</div>
+<div id="map"></div>
+<script>
+    mapboxgl.accessToken = "";
+    const map = new mapboxgl.Map({
+        container: "map",
+        style: "mapbox://styles/mapbox/streets-v12",
+        center: [78.96, 20.59], zoom: 4
+    });
+
+    // Store area bounding box (for local autocomplete)
+    let areaBbox = null, areaCenter = null;
+
+    // --- AUTOCOMPLETE ---
+    function setupAutocomplete(input, suggEl, restrictByArea=false) {
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    if (q.length < 3) { suggEl.innerHTML = ""; return; }
+
+    // Build Mapbox Geocoding URL with both proximity & bbox if available
+    let params = [
+      `autocomplete=true`,
+      `limit=7`,
+      `access_token=${mapboxgl.accessToken}`
+    ];
+
+    if (restrictByArea && areaCenter) {
+      params.push(`proximity=${areaCenter[0]},${areaCenter[1]}`);
+    }
+    if (restrictByArea && areaBbox) {
+      params.push(`bbox=${areaBbox.join(",")}`);
+    }
+
+    const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/`
+      + encodeURIComponent(q) + `.json?` + params.join("&");
+
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        suggEl.innerHTML = "";
+        (data.features || []).forEach(f => {
+          const div = document.createElement("div");
+          div.className = "autocomplete-suggestion";
+          div.textContent = f.place_name;
+          div.addEventListener("mousedown", () => {
+            input.value = f.place_name;
+            input.dataset.lng = f.center[0];
+            input.dataset.lat = f.center[1];
+            suggEl.innerHTML = "";
+
+            // if this is your area input, capture center & bbox
+            if (input.id === "area") {
+              areaCenter = f.center;
+              if (f.bbox) areaBbox = f.bbox;
+              else {
+                const [lng, lat] = f.center;
+                // fallback small box around center
+                areaBbox = [lng-0.1, lat-0.1, lng+0.1, lat+0.1];
+              }
+            }
+          });
+          suggEl.append(div);
+        });
+      });
+  });
+
+  // hide after you click
+  input.addEventListener("blur", () => {
+    setTimeout(() => { suggEl.innerHTML = ""; }, 150);
+  });
+}
+
+    // AREA AUTOCOMPLETE (step 1)
+    setupAutocomplete(
+        document.getElementById("area"),
+        document.getElementById("area-suggestions"),
+        false // No bbox for area
+    );
+
+    // MAIN INPUT AUTOCOMPLETE (step 2, after area selected) - all restricted to areaBbox
+    function setupLocalAutocompleteForInput(input, suggestions) {
+        setupAutocomplete(input, suggestions, true);
+    }
+
+    setupLocalAutocompleteForInput(document.getElementById("start"), document.getElementById("start-suggestions"));
+    setupLocalAutocompleteForInput(document.getElementById("end"), document.getElementById("end-suggestions"));
+
+    // Waypoint dynamic list
+    function addWaypointInput() {
+        const idx = document.querySelectorAll('.waypoint-input').length;
+        const div = document.createElement("div");
+        div.className = "autocomplete-container";
+        div.style.marginBottom = "0";
+        div.innerHTML = `
+            <input type="text" class="waypoint-input" autocomplete="off" placeholder="Waypoint ${idx+1}">
+            <div class="autocomplete-suggestions"></div>
+            <button type="button" onclick="this.parentNode.remove(); removeWaypointMarker(${idx});" style="margin:3px 0 10px 6px; background:#bb2222;">Remove</button>
+        `;
+        document.getElementById("waypoints-list").appendChild(div);
+
+        const input = div.querySelector('input');
+        const sugg = div.querySelector('.autocomplete-suggestions');
+        setupLocalAutocompleteForInput(input, sugg);
+    }
+
+    document.getElementById("add-waypoint-btn").onclick = addWaypointInput;
+
+    // --- Area GO BUTTON ---
+    document.getElementById("area-go-btn").onclick = function() {
+        const start = document.getElementById("start");
+  const end   = document.getElementById("end");
+  start.value = "";
+  end.value   = "";
+  delete start.dataset.lng;
+  delete start.dataset.lat;
+  delete end.dataset.lng;
+  delete end.dataset.lat;
+  // Clear any waypoint inputs:
+  document.getElementById("waypoints-list").innerHTML = "";
+  // Remove old route line if present:
+  if (map.getSource("route")) {
+    map.removeLayer("route");
+    map.removeSource("route");
+  }
+  // Remove any markers (assuming you have removeAllMarkers())
+  removeAllMarkers();
+        const areaInput = document.getElementById("area");
+        if (!areaInput.value.trim()) { alert("Please enter area."); return; }
+        let lng = areaInput.dataset.lng, lat = areaInput.dataset.lat;
+        // If picked from suggestions, areaBbox/center already set
+        function afterZoom() {
+            document.getElementById("area-section").classList.add("hidden");
+            document.getElementById("route-section").classList.remove("hidden");
+            document.getElementById("new-area-btn").classList.remove("hidden");
+        }
+        if (lng && lat) {
+            map.flyTo({center: [lng, lat], zoom: 11});
+            setTimeout(afterZoom, 500);
+        } else {
+            // Search for coords if not picked from suggestion
+            fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(areaInput.value)}.json?access_token=${mapboxgl.accessToken}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.features && data.features.length > 0) {
+                        let feature = data.features[0];
+                        let [lng, lat] = feature.center;
+                        areaInput.dataset.lng = lng;
+                        areaInput.dataset.lat = lat;
+                        if (feature.bbox) areaBbox = feature.bbox;
+                        else areaBbox = [
+                            lng - 0.2, lat - 0.2,
+                            lng + 0.2, lat + 0.2
+                        ];
+                        areaCenter = feature.center;
+                        map.flyTo({center: [lng, lat], zoom: 11});
+                        setTimeout(afterZoom, 500);
+                    } else {
+                        alert("Area not found. Please try again.");
+                    }
+                });
+        }
+    };
+
+    // --- New Area (Reset everything) ---
+    function resetArea() {
+        areaBbox = null; areaCenter = null;
+        document.getElementById("area").value = "";
+        document.getElementById("area").dataset.lng = "";
+        document.getElementById("area").dataset.lat = "";
+        document.getElementById("area-section").classList.remove("hidden");
+        document.getElementById("route-section").classList.add("hidden");
+        document.getElementById("new-area-btn").classList.add("hidden");
+        // Remove all markers & layers
+        removeAllMarkers();
+        if (map.getSource('route')) {
+            map.removeLayer('route');
+            map.removeSource('route');
+        }
+        map.flyTo({center: [78.96, 20.59], zoom: 4});
+        // Remove waypoints
+        document.getElementById("waypoints-list").innerHTML = "";
+    }
+
+    // --- Markers management ---
+    let markers = [], waypointMarkers = [];
+    function removeAllMarkers() {
+        markers.forEach(m => m.remove());
+        markers = [];
+        waypointMarkers.forEach(m => m.remove());
+        waypointMarkers = [];
+    }
+    function removeWaypointMarker(idx) {
+        if (waypointMarkers[idx]) {
+            waypointMarkers[idx].remove();
+            waypointMarkers[idx] = null;
+        }
+    }
+
+    function addMarker(coord, color, labelText) {
+        const el = document.createElement('div');
+        el.style.background = color;
+        el.style.borderRadius = '50%';
+        el.style.width = '24px';
+        el.style.height = '24px';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.style.boxShadow = '0 0 4px #555';
+        const span = document.createElement('span');
+        span.className = 'marker-label';
+        span.innerText = labelText;
+        el.appendChild(span);
+        const m = new mapboxgl.Marker(el).setLngLat(coord).addTo(map);
+        return m;
+    }
+
+    // --- Find Route ---
+    function findRoute() {
+        removeAllMarkers();
+        let startInput = document.getElementById('start');
+        let endInput = document.getElementById('end');
+        let waypointInputs = document.querySelectorAll('.waypoint-input');
+        // Validate
+        if (!startInput.dataset.lng || !endInput.dataset.lng) {
+            alert("Please select start and end locations from suggestions.");
+            return;
+        }
+        let coords = [
+            [startInput.dataset.lng, startInput.dataset.lat],
+            ...Array.from(waypointInputs).map(input => {
+                if (!input.value.trim()) return null;
+                if (!input.dataset.lng) { alert(`Please select '${input.value}' from suggestions.`); throw "invalid waypoint"; }
+                return [input.dataset.lng, input.dataset.lat];
+            }).filter(Boolean),
+            [endInput.dataset.lng, endInput.dataset.lat]
+        ];
+        // Markers
+        markers.push(addMarker(coords[0], "#16a34a", "S"));
+        coords.slice(1,-1).forEach((c,i) => {
+            waypointMarkers[i] = addMarker(c, "#f59e42", `W${i+1}`);
+        });
+        markers.push(addMarker(coords[coords.length-1], "#f13d44", "E"));
+
+        const coordStr = coords.map(c => c.join(",")).join(";");
+        const url = `https://api.mapbox.com/directions/v5/mapbox/driving/${coordStr}?geometries=geojson&access_token=${mapboxgl.accessToken}`;
+        fetch(url)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.routes || data.routes.length === 0) {
+                    alert("Route not found.");
+                    return;
+                }
+                const route = data.routes[0].geometry;
+                if (map.getSource('route')) {
+                    map.removeLayer('route');
+                    map.removeSource('route');
+                }
+                map.addSource('route', {
+                    type: 'geojson',
+                    data: {type: 'Feature', geometry: route}
+                });
+                map.addLayer({
+                    id: 'route',
+                    type: 'line',
+                    source: 'route',
+                    layout: {'line-cap': 'round','line-join':'round'},
+                    paint: {'line-color': '#0077cc','line-width': 5}
+                });
+                // Fit to route
+                const bounds = route.coordinates.reduce(
+                    (b, c) => b.extend(c),
+                    new mapboxgl.LngLatBounds(route.coordinates[0], route.coordinates[0])
+                );
+                map.fitBounds(bounds, {padding: 40});
+            });
+    }
+    // Expose for waypoint remove button
+    window.removeWaypointMarker = removeWaypointMarker;
+    window.resetArea = resetArea;
+</script>
+</body>
+</html>
