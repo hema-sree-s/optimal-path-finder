@@ -2,34 +2,35 @@ name: 📦 Build & Deploy Pages
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 permissions:
-  contents: read    # for checkout
-  pages: write      # to publish to GitHub Pages
-  id-token: write   # required by deploy-pages
+  contents: read      # to checkout your code
+  pages: write        # to create/update gh-pages branch
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      # 1) checkout your code
+      # 1) Check out main
       - uses: actions/checkout@v3
 
-      # 2) assemble the static site into "site/"
+      # 2) Assemble a 'site/' directory
       - name: Prepare static site
         run: |
           rm -rf site
           mkdir site
+          # Copy your HTML + static assets
           cp templates/index.html site/index.html
           cp -r static site/static
-          # inject the Mapbox key from your secret
-          sed -i "s/{{ mapbox_key }}/$MAPBOX_KEY/g" site/index.html
+          # Inject the real Mapbox token
+          sed -i "s/{{ mapbox_key }}/$MAPBOX_API_KEY/g" site/index.html
 
-      # 3) upload to the Pages artifact (NOT upload-artifact!)
-      - uses: actions/upload-pages-artifact@v1
+      # 3) Deploy via pushing to gh-pages
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          path: site
-
-      # 4) deploy to gh-pages
-      - uses: actions/deploy-pages@v1
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: site
