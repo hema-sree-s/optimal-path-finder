@@ -19,6 +19,8 @@ jobs:
 
       # 2) Assemble a 'site/' directory
       - name: Prepare static site
+        env:
+          MAPBOX_API_KEY: ${{ secrets.MAPBOX_API_KEY }}
         run: |
           rm -rf site
           mkdir site
