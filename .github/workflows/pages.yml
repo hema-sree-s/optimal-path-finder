@@ -1,0 +1,35 @@
+name: 📦 Build & Deploy Pages
+
+# on every push to main
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) check out your code
+      - uses: actions/checkout@v3
+
+      # 2) assemble a "site" folder with exactly what Pages needs
+      - name: Prepare static site
+        run: |
+          rm -rf site
+          mkdir site
+          # Copy your Flask template (index.html) into the site root
+          cp templates/index.html site/index.html
+          # Copy your static assets (JS/CSS/images)
+          cp -r static site/static
+
+          # Inject the real Mapbox token in place of the Jinja tag
+          sed -i "s/{{ mapbox_key }}/$MAPBOX_KEY/g" site/index.html
+
+      # 3) upload that folder as the Pages artifact
+      - uses: actions/upload-pages-artifact@v1
+        with:
+          path: site
+
+      # 4) deploy it to GitHub Pages (gh-pages branch)
+      - uses: actions/deploy-pages@v1
