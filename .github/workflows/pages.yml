@@ -6,8 +6,9 @@ on:
       - main
 
 permissions:
-  contents: read      # to checkout your code
+  contents: write      # to checkout your code
   pages: write        # to create/update gh-pages branch
+  id-token: write
 
 jobs:
   deploy:
